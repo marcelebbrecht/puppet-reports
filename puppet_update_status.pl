@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 # includes
-#use strict;
+use strict;
 use warnings;
 use YAML::XS 'LoadFile';
 use Data::Dumper;
@@ -31,7 +31,6 @@ my %reports;
 foreach my $reportContact (@reportRecipients) {
 	if ( $debug > 0 ) { print "Report for: ".$reportContact."\n"; }
 	foreach my $reportFile (@reportFiles) {
-		my $machineCount = 0;
 		if ( $debug > 0 ) { print "\tTesting: ".$reportFile."\n"; }
 		my $nodeConfig = LoadFile($reportFile);
 		if ( $debug > 0 ) { print "\tTesting: ".$nodeConfig->{name}."\n"; }
@@ -176,5 +175,10 @@ foreach my $reportContact (@reportRecipients) {
 }
 
 # now create report emails by contact
-print Dumper(%reports);
+
+foreach my $reportContact (@reportRecipients) {
+	print $reportContact."\n";
+}
+
+#print Dumper(%reports);
 #print Dumper($reports{'ukmupdatesdebian@e2hosting.de'});
