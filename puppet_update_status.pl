@@ -6,6 +6,11 @@ use warnings;
 use YAML::XS 'LoadFile';
 use Data::Dumper;
 use List::MoreUtils qw(any uniq);
+use Sys::Hostname;
+use Email::Sender::Simple qw(sendmail);
+use Email::Sender::Transport::SMTP ();
+use Email::Simple ();
+use Email::Simple::Creator ();
 
 # settings
 my $debug = 0;
@@ -14,8 +19,6 @@ my $smtpSender = "foreman\@debian1.ukmtest.local";
 my $smtpServer = "127.0.0.1";
 
 # execution
-print "Generating Reports, please wait ...\n";
-
 # first get all recipients, sort and uniq
 my @reportRecipients;
 my @reportFiles = <$nodeDirectory/*.yaml>;
@@ -40,6 +43,7 @@ foreach my $reportContact (@reportRecipients) {
 			if ( $debug > 0 ) { print "\t\tFound machine: ".$nodeConfig->{name}."\n"; }
 			$reports{$reportContact}{$nodeConfig->{name}}{contactMail} = $nodeConfig->{classes}->{updatereport}->{contactmail};
 			$reports{$reportContact}{$nodeConfig->{name}}{contactName} = $nodeConfig->{classes}->{updatereport}->{contactname};
+			$reports{$reportContact}{$nodeConfig->{name}}{lastUpdate} = (stat($reportFile))[9];
 			$reports{$reportContact}{$nodeConfig->{name}}{machineName} = $nodeConfig->{name};
 			$reports{$reportContact}{$nodeConfig->{name}}{machineEnvironment} = $nodeConfig->{parameters}->{environment};
 			$reports{$reportContact}{$nodeConfig->{name}}{machineOwnerName} = $nodeConfig->{parameters}->{owner_name};
@@ -50,9 +54,11 @@ foreach my $reportContact (@reportRecipients) {
 			$reports{$reportContact}{$nodeConfig->{name}}{machineOsName} = $nodeConfig->{parameters}->{operatingsystem};
 			$reports{$reportContact}{$nodeConfig->{name}}{machineOsVersion} = $nodeConfig->{parameters}->{operatingsystemrelease};
 			$reports{$reportContact}{$nodeConfig->{name}}{machinePkg} = $nodeConfig->{parameters}->{package_provider};
+			$reports{$reportContact}{$nodeConfig->{name}}{machineUptime} = $nodeConfig->{parameters}->{uptime_days};
 			$reports{$reportContact}{$nodeConfig->{name}}{foremanHostgroup} = $nodeConfig->{parameters}->{hostgroup};
 
 			# collect pkg dependent information: APT
+			if ( $debug > 0 ) { print "\n"; }
 			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == apt\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "apt" ) {
 				if ( $debug > 0 ) { print "\t\tTesting: is APT!\n"; }
@@ -83,6 +89,7 @@ foreach my $reportContact (@reportRecipients) {
 			}
 
 			# collect pkg dependent information: YUM
+			if ( $debug > 0 ) { print "\n"; }
 			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == yum\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "yum" ) {
 				if ( $debug > 0 ) { print "\t\tTesting: is YUM!\n"; }
@@ -111,6 +118,7 @@ foreach my $reportContact (@reportRecipients) {
 			}
 
 			# collect pkg dependent information: Zypper (security patches are security updates, normal patches are updates, updates are updates)
+			if ( $debug > 0 ) { print "\n"; }
 			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == zypper\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "zypper" ) {
 				if ( $debug > 0 ) { print "\t\tTesting: is Zypper!\n"; }
@@ -131,9 +139,11 @@ foreach my $reportContact (@reportRecipients) {
 					if ( $debug > 0 ) { print "\t\thas patches!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "true";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = $reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList}.", Patches: ".$nodeConfig->{parameters}->{zypper_patches_available_list};
+					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} =~ s/ , /, /g;
 				} else {
 					if ( $debug > 0 ) { print "\t\tno patches!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = $reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList}.", Patches: empty";
+					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} =~ s/ , /, /g;
 				}
 
 				if ( $debug > 0 ) { print "\t\tTesting: has security patches: ".$nodeConfig->{parameters}->{zypper_patches_available_security}."\n"; }
@@ -149,6 +159,7 @@ foreach my $reportContact (@reportRecipients) {
 			}
 
 			# collect pkg dependent information: PKG (no difference between normal and security, so just copy)
+			if ( $debug > 0 ) { print "\n"; }
 			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == pkg\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "pkg" ) {
 				if ( $debug > 0 ) { print "\t\tTesting: is PKG!\n"; }
@@ -171,14 +182,92 @@ foreach my $reportContact (@reportRecipients) {
 		} else {
 			if ( $debug > 0 ) { print "\t\tUnknown machine: ".$nodeConfig->{name}."\n"; }
 		}
+		if ( $debug > 0 ) { print "\n\n"; }
 	}
+	if ( $debug > 0 ) { print "\n\n"; }
 }
 
 # now create report emails by contact
-
+if ( $debug > 0 ) { print "\n\n"; }
 foreach my $reportContact (@reportRecipients) {
-	print $reportContact."\n";
+	# create reporting file and open handler
+	if ( $debug > 0 ) { print "Create report for user: ".$reportContact."\n"; }
+	my $reportFilename = '/tmp/puppet-report-mail-'.$reportContact.'.txt';
+	open(my $reportFilenameHandle, '>', $reportFilename) or die "Could not open file '$reportFilename' $!";
+	print $reportFilenameHandle "Update status report for:\t".$reportContact."\n";
+	print $reportFilenameHandle "Report generation date:\t\t".localtime."\n\n";
+
+	for my $reportMachine ( keys %{ $reports{$reportContact}} ) {
+	        if ( $debug > 0 ) { print "\tCreate report for machine: ".$reportMachine."\n"; }
+		my %reportData = %{ $reports{$reportContact}{$reportMachine}};
+
+		# test if needs reporting for updates
+		my $createReport = 0;
+		my $createSecurityReport = 0;
+	        if ( $debug > 0 ) { print "\t\tTest for updates: ".$reportMachine."\n"; }
+		if ( $reportData{hasUpdates} eq "true" ) {
+		        if ( $debug > 0 ) { print "\t\tHas updates!\n"; }
+			$createReport = 1;
+		} else {
+		        if ( $debug > 0 ) { print "\t\tHas no updates!\n"; }
+		}
+
+		# test if needs reporting for security updates
+	        if ( $debug > 0 ) { print "\t\tTest for security updates: ".$reportMachine."\n"; }
+		if ( $reportData{hasSecurityUpdates} eq "true" ) {
+		        if ( $debug > 0 ) { print "\t\tHas security updates!\n"; }
+			$createSecurityReport = 1;
+		} else {
+		        if ( $debug > 0 ) { print "\t\tHas no security updates!\n"; }
+		}
+
+	        if ( $debug > 1 ) { print "\t\tWriting report file\n"; }
+		print $reportFilenameHandle "Machine:\t".$reportData{machineFqdn}."\n";
+		print $reportFilenameHandle "System:\t\t".$reportData{machineOsName}." ".$reportData{machineOsVersion}.", up since ".$reportData{machineUptime}." days, last report on ".localtime($reportData{lastUpdate}).", IP: ".$reportData{machineIp}."\n";
+		print $reportFilenameHandle "Maintainer:\t".$reportData{machineOwnerName}." <".$reportData{machineOwnerMail}.">\n";
+		if ( $createReport == 0 && $createSecurityReport == 0 ) {
+			print $reportFilenameHandle "\t\tNo updates are available, everything is fine, just chill and relax!\n";
+		} else {
+			if ( $createReport == 1 ) {
+				print $reportFilenameHandle "Updates:\t$reportData{hasUpdatesList}\n";
+			} 
+			if ( $createSecurityReport == 1 ) {
+				print $reportFilenameHandle "Security:\t$reportData{hasSecurityUpdatesList}\n";
+			}
+		}
+		print $reportFilenameHandle "\n";
+
+	}
+
+	print $reportFilenameHandle "That's it, my dark master,\nlive long and prosper!\n\nMaster of puppets\n".hostname."\n";
+	close($reportFilenameHandle);
+
+	open($reportFilenameHandle, '<:encoding(UTF-8)', $reportFilename) or die "Could not open file '$reportFilename' $!";
+	my $mailBody = "";
+	while (my $row = <$reportFilenameHandle>) {
+		$mailBody .= $row;
+	}
+	close($reportFilenameHandle);
+	unlink($reportFilename);
+
+	if ( $debug > 1 ) { print "\tSending emailreport to: ".$reportContact."\n"; }
+	my $transport = Email::Sender::Transport::SMTP->new({
+		host => $smtpServer
+	});
+
+	my $email = Email::Simple->create(
+		header => [
+			To => $reportContact,
+			From => $smtpSender,
+			Subject => "Update status report for: ".$reportContact,
+		],
+		body => $mailBody."\n",
+	);
+	sendmail($email, { transport => $transport });
 }
 
-#print Dumper(%reports);
-#print Dumper($reports{'ukmupdatesdebian@e2hosting.de'});
+if ( $debug > 1 ) { 
+	print "\nReport Data:\n";
+	print Dumper(%reports);
+	print "\n";
+}
