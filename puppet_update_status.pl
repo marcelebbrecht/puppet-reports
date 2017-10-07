@@ -43,6 +43,7 @@ foreach my $reportContact (@reportRecipients) {
 			if ( $debug > 0 ) { print "\t\tFound machine: ".$nodeConfig->{name}."\n"; }
 			$reports{$reportContact}{$nodeConfig->{name}}{contactMail} = $nodeConfig->{classes}->{updatereport}->{contactmail};
 			$reports{$reportContact}{$nodeConfig->{name}}{contactName} = $nodeConfig->{classes}->{updatereport}->{contactname};
+			$reports{$reportContact}{$nodeConfig->{name}}{reportAlways} = $nodeConfig->{classes}->{updatereport}->{reportalways};
 			$reports{$reportContact}{$nodeConfig->{name}}{lastUpdate} = (stat($reportFile))[9];
 			$reports{$reportContact}{$nodeConfig->{name}}{machineName} = $nodeConfig->{name};
 			$reports{$reportContact}{$nodeConfig->{name}}{machineEnvironment} = $nodeConfig->{parameters}->{environment};
@@ -198,45 +199,48 @@ foreach my $reportContact (@reportRecipients) {
 	print $reportFilenameHandle "Report generation date:\t\t".localtime."\n\n";
 
 	for my $reportMachine ( keys %{ $reports{$reportContact}} ) {
-	        if ( $debug > 0 ) { print "\tCreate report for machine: ".$reportMachine."\n"; }
 		my %reportData = %{ $reports{$reportContact}{$reportMachine}};
+		if ( $reportData{reportAlways} == 1 ) {
+	        	if ( $debug > 0 ) { print "\tCreate report for machine: ".$reportMachine."\n"; }
 
-		# test if needs reporting for updates
-		my $createReport = 0;
-		my $createSecurityReport = 0;
-	        if ( $debug > 0 ) { print "\t\tTest for updates: ".$reportMachine."\n"; }
-		if ( $reportData{hasUpdates} eq "true" ) {
-		        if ( $debug > 0 ) { print "\t\tHas updates!\n"; }
-			$createReport = 1;
-		} else {
-		        if ( $debug > 0 ) { print "\t\tHas no updates!\n"; }
-		}
-
-		# test if needs reporting for security updates
-	        if ( $debug > 0 ) { print "\t\tTest for security updates: ".$reportMachine."\n"; }
-		if ( $reportData{hasSecurityUpdates} eq "true" ) {
-		        if ( $debug > 0 ) { print "\t\tHas security updates!\n"; }
-			$createSecurityReport = 1;
-		} else {
-		        if ( $debug > 0 ) { print "\t\tHas no security updates!\n"; }
-		}
-
-	        if ( $debug > 1 ) { print "\t\tWriting report file\n"; }
-		print $reportFilenameHandle "Machine:\t".$reportData{machineFqdn}."\n";
-		print $reportFilenameHandle "System:\t\t".$reportData{machineOsName}." ".$reportData{machineOsVersion}.", up since ".$reportData{machineUptime}." days, last report on ".localtime($reportData{lastUpdate}).", IP: ".$reportData{machineIp}."\n";
-		print $reportFilenameHandle "Maintainer:\t".$reportData{machineOwnerName}." <".$reportData{machineOwnerMail}.">\n";
-		if ( $createReport == 0 && $createSecurityReport == 0 ) {
-			print $reportFilenameHandle "\t\tNo updates are available, everything is fine, just chill and relax!\n";
-		} else {
-			if ( $createReport == 1 ) {
-				print $reportFilenameHandle "Updates:\t$reportData{hasUpdatesList}\n";
-			} 
-			if ( $createSecurityReport == 1 ) {
-				print $reportFilenameHandle "Security:\t$reportData{hasSecurityUpdatesList}\n";
+			# test if needs reporting for updates
+			my $createReport = 0;
+			my $createSecurityReport = 0;
+		        if ( $debug > 0 ) { print "\t\tTest for updates: ".$reportMachine."\n"; }
+			if ( $reportData{hasUpdates} eq "true" ) {
+			        if ( $debug > 0 ) { print "\t\tHas updates!\n"; }
+				$createReport = 1;
+			} else {
+			        if ( $debug > 0 ) { print "\t\tHas no updates!\n"; }
 			}
-		}
-		print $reportFilenameHandle "\n";
 
+			# test if needs reporting for security updates
+		        if ( $debug > 0 ) { print "\t\tTest for security updates: ".$reportMachine."\n"; }
+			if ( $reportData{hasSecurityUpdates} eq "true" ) {
+			        if ( $debug > 0 ) { print "\t\tHas security updates!\n"; }
+				$createSecurityReport = 1;
+			} else {
+			        if ( $debug > 0 ) { print "\t\tHas no security updates!\n"; }
+			}
+	
+		        if ( $debug > 1 ) { print "\t\tWriting report file\n"; }
+			print $reportFilenameHandle "Machine:\t".$reportData{machineFqdn}."\n";
+			print $reportFilenameHandle "System:\t\t".$reportData{machineOsName}." ".$reportData{machineOsVersion}.", up since ".$reportData{machineUptime}." days, last report on ".localtime($reportData{lastUpdate}).", IP: ".$reportData{machineIp}."\n";
+			print $reportFilenameHandle "Maintainer:\t".$reportData{machineOwnerName}." <".$reportData{machineOwnerMail}.">\n";
+			if ( $createReport == 0 && $createSecurityReport == 0 ) {
+				print $reportFilenameHandle "\t\tNo updates are available, everything is fine, just chill and relax!\n";
+			} else {
+				if ( $createReport == 1 ) {
+					print $reportFilenameHandle "Updates:\t$reportData{hasUpdatesList}\n";
+				} 
+				if ( $createSecurityReport == 1 ) {
+					print $reportFilenameHandle "Security:\t$reportData{hasSecurityUpdatesList}\n";
+				}
+			}
+			print $reportFilenameHandle "\n";
+		} else {
+	        	if ( $debug > 0 ) { print "\tNo report for machine: ".$reportMachine."\n"; }
+		}
 	}
 
 	print $reportFilenameHandle "That's it, my dark master,\nlive long and prosper!\n\nMaster of puppets\n".hostname."\n";
