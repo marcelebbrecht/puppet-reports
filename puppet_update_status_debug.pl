@@ -13,12 +13,13 @@ use Email::Simple ();
 use Email::Simple::Creator ();
 
 # settings
+my $debug = 0;
 my $nodeDirectory = "/opt/puppetlabs/server/data/puppetserver/yaml/node";
 my $smtpSender = "foreman\@debian1.ukmtest.local";
 my $smtpServer = "127.0.0.1";
 
 # execution
-# first get all recipients from files, sort and uniq
+# first get all recipients, sort and uniq
 my @reportRecipients;
 my @reportFiles = <$nodeDirectory/*.yaml>;
 foreach my $reportFile (@reportFiles) {
@@ -28,17 +29,18 @@ foreach my $reportFile (@reportFiles) {
 }
 @reportRecipients = sort(uniq(@reportRecipients));
 
-# now iterate over recipients and create report per recipient
 my %reports;
+# now iterate over hosts and create report per recipient
 foreach my $reportContact (@reportRecipients) {
-
-	# iterate over report files (machines)
+	if ( $debug > 0 ) { print "Report for: ".$reportContact."\n"; }
 	foreach my $reportFile (@reportFiles) {
+		if ( $debug > 0 ) { print "\tTesting: ".$reportFile."\n"; }
 		my $nodeConfig = LoadFile($reportFile);
-
-		# if machine belongs to recipient
+		if ( $debug > 0 ) { print "\tTesting: ".$nodeConfig->{name}."\n"; }
+		if ( $debug > 0 ) { print "\tTesting: ".$nodeConfig->{classes}->{updatereport}->{contactmail}."\n"; }
 		if ( $nodeConfig->{classes}->{updatereport}->{contactmail} eq $reportContact ) {
 			# collect common information
+			if ( $debug > 0 ) { print "\t\tFound machine: ".$nodeConfig->{name}."\n"; }
 			$reports{$reportContact}{$nodeConfig->{name}}{contactMail} = $nodeConfig->{classes}->{updatereport}->{contactmail};
 			$reports{$reportContact}{$nodeConfig->{name}}{contactName} = $nodeConfig->{classes}->{updatereport}->{contactname};
 			$reports{$reportContact}{$nodeConfig->{name}}{reportAlways} = $nodeConfig->{classes}->{updatereport}->{reportalways};
@@ -57,177 +59,146 @@ foreach my $reportContact (@reportRecipients) {
 			$reports{$reportContact}{$nodeConfig->{name}}{foremanHostgroup} = $nodeConfig->{parameters}->{hostgroup};
 
 			# collect pkg dependent information: APT
-			# apt knows updates and security-updates
-			# check for apt-like system (Debian and derivates)
+			if ( $debug > 0 ) { print "\n"; }
+			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == apt\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "apt" ) {
+				if ( $debug > 0 ) { print "\t\tTesting: is APT!\n"; }
 
-				# get reboot status
-				if ( $nodeConfig->{parameters}->{apt_needs_reboot} eq "yes" ) {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasReboot} = "true";
-				} else {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasReboot} = "false";
-				}
-
-				# if "has_updates" is true, it has updates, list them
+				if ( $debug > 0 ) { print "\t\tTesting: has updates: ".$nodeConfig->{parameters}->{apt_has_updates}."\n"; }
 				if ( $nodeConfig->{parameters}->{apt_has_updates} == 1 ) {
+					if ( $debug > 0 ) { print "\t\thas updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "true";
 					my $list = join(" ",@{$nodeConfig->{parameters}->{apt_package_updates}});
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = $list;
-				# if not, not ;)
 				} else {
+					if ( $debug > 0 ) { print "\t\tno updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "false";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = "empty";
 				}
 
-				# if "apt_hold_available" is true, it has holds, list them
-				if ( $nodeConfig->{parameters}->{apt_hold_available} eq "yes" ) {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHold} = "true";
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHoldList} = $nodeConfig->{parameters}->{apt_hold_available_list};
-				# if not, not ;)
-				} else {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHold} = "false";
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHoldList} = "empty";
-				}
-
-				# if "has_updates" is true, there maybe security updates, also
-				# (apt-plugin dont sned this facts if no normal updates are available)
 				if ( $nodeConfig->{parameters}->{apt_has_updates} == 1 ) {
-					# if "has_security_updates" is true, it has updates, list them
+					if ( $debug > 0 ) { print "\t\tTesting: has security updates: ".$nodeConfig->{parameters}->{apt_security_updates}."\n"; }
 					if ( $nodeConfig->{parameters}->{apt_security_updates} > 0 ) {
+						if ( $debug > 0 ) { print "\t\thas security updates!\n"; }
 						$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = "true";
 						my $list = join(" ",@{$nodeConfig->{parameters}->{apt_package_security_updates}});
 						$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = $list;
-					# if not, not ;)
 					} else {
+						if ( $debug > 0 ) { print "\t\tno security updates!\n"; }
 						$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = "false";
 						$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = "empty";
 					}
-
-				# if "has_updates" false, there are no security updates, so set list and value manually
 				} else {
+					if ( $debug > 0 ) { print "\t\tno security updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = "false";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = "empty";
 				}
 			}
 
 			# collect pkg dependent information: YUM
-			# yum knows updates and security-updates
-			# check for yum-like system (RedHat an derivates)
+			if ( $debug > 0 ) { print "\n"; }
+			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == yum\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "yum" ) {
+				if ( $debug > 0 ) { print "\t\tTesting: is YUM!\n"; }
 
-				# get reboot status
-				if ( $nodeConfig->{parameters}->{yum_needs_reboot} eq "yes" ) {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasReboot} = "true";
-				} else {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasReboot} = "false";
-				}
-
-				# if "yum_hold_available" is true, it has holds, list them
-				if ( $nodeConfig->{parameters}->{yum_hold_available} eq "yes" ) {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHold} = "true";
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHoldList} = $nodeConfig->{parameters}->{yum_hold_available_list};
-				# if not, not ;)
-				} else {
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHold} = "false";
-					$reports{$reportContact}{$nodeConfig->{name}}{hasHoldList} = "empty";
-				}
-
-				# if "yum_updates_available" is true, it has updates, list them
+				if ( $debug > 0 ) { print "\t\tTesting: has updates: ".$nodeConfig->{parameters}->{yum_updates_available}."\n"; }
 				if ( $nodeConfig->{parameters}->{yum_updates_available} eq "yes" ) {
+					if ( $debug > 0 ) { print "\t\thas updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "true";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = $nodeConfig->{parameters}->{yum_updates_available_list};
-				# if not, not ;)
 				} else {
+					if ( $debug > 0 ) { print "\t\tno updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "false";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = "empty";
 				}
 
-				# if "yum_updates_available_security" is true, it has updates, list them
+				if ( $debug > 0 ) { print "\t\tTesting: has security updates: ".$nodeConfig->{parameters}->{yum_updates_available_security}."\n"; }
 				if ( $nodeConfig->{parameters}->{yum_updates_available_security} eq "yes" ) {
+					if ( $debug > 0 ) { print "\t\thas security updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = "true";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = $nodeConfig->{parameters}->{yum_updates_available_security_list};
-				# if not, not ;)
 				} else {
+					if ( $debug > 0 ) { print "\t\tno security updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = "false";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = "empty";
 				}
 			}
 
 			# collect pkg dependent information: Zypper (security patches are security updates, normal patches are updates, updates are updates)
-			# zypper knows updates, patches and security-patches
-			# check for zypper-like system (Suse)
+			if ( $debug > 0 ) { print "\n"; }
+			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == zypper\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "zypper" ) {
+				if ( $debug > 0 ) { print "\t\tTesting: is Zypper!\n"; }
 
-				# set values, they're not really true but we need them, TODO: fix that
-				$reports{$reportContact}{$nodeConfig->{name}}{hasReboot} = "false";
-				$reports{$reportContact}{$nodeConfig->{name}}{hasHold} = "false";
-				$reports{$reportContact}{$nodeConfig->{name}}{hasHoldList} = "empty";
-
-				# if "zypper_updates_available" is true, it has updates, list them
+				if ( $debug > 0 ) { print "\t\tTesting: has updates: ".$nodeConfig->{parameters}->{zypper_updates_available}."\n"; }
 				if ( $nodeConfig->{parameters}->{zypper_updates_available} eq "yes" ) {
+					if ( $debug > 0 ) { print "\t\thas updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "true";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = "Updates: ".$nodeConfig->{parameters}->{zypper_updates_available_list};
-				# if not, not ;)
 				} else {
+					if ( $debug > 0 ) { print "\t\tno updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "false";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = "Updates: empty";
 				}
 
-				# if "zypper_patches_available" is true, it has patches, list them
+				if ( $debug > 0 ) { print "\t\tTesting: has patches: ".$nodeConfig->{parameters}->{zypper_patches_available}."\n"; }
 				if ( $nodeConfig->{parameters}->{zypper_patches_available} eq "yes" ) {
+					if ( $debug > 0 ) { print "\t\thas patches!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "true";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = $reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList}.", Patches: ".$nodeConfig->{parameters}->{zypper_patches_available_list};
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} =~ s/ , /, /g;
-				# if not, not ;)
 				} else {
+					if ( $debug > 0 ) { print "\t\tno patches!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = $reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList}.", Patches: empty";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} =~ s/ , /, /g;
 				}
 
-				# if "zypper_patches_available_security" is true, it has patches, list them
+				if ( $debug > 0 ) { print "\t\tTesting: has security patches: ".$nodeConfig->{parameters}->{zypper_patches_available_security}."\n"; }
 				if ( $nodeConfig->{parameters}->{zypper_patches_available_security} eq "yes" ) {
+					if ( $debug > 0 ) { print "\t\thas security patches!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = "true";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = $nodeConfig->{parameters}->{zypper_patches_available_security_list};
-				# if not, not ;)
 				} else {
+					if ( $debug > 0 ) { print "\t\tno security patches!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = "false";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = "empty";
 				}
 			}
 
 			# collect pkg dependent information: PKG (no difference between normal and security, so just copy)
-			# this is still very basic, because we dont get any updates without subscription - UNTESTED!
-			# check for pkg-like system (Solaris)
+			if ( $debug > 0 ) { print "\n"; }
+			if ( $debug > 0 ) { print "\t\tTesting: ".$reports{$reportContact}{$nodeConfig->{name}}{machinePkg}." == pkg\n"; }
 			if ( $reports{$reportContact}{$nodeConfig->{name}}{machinePkg} eq "pkg" ) {
+				if ( $debug > 0 ) { print "\t\tTesting: is PKG!\n"; }
 
-				# set values, they're not really true but we need them, TODO: fix that
-				$reports{$reportContact}{$nodeConfig->{name}}{hasReboot} = "false";
-				$reports{$reportContact}{$nodeConfig->{name}}{hasHold} = "false";
-				$reports{$reportContact}{$nodeConfig->{name}}{hasHoldList} = "empty";
-
-				# if "pkg_updates_available" is true, it has updates, list them
+				if ( $debug > 0 ) { print "\t\tTesting: has updates: ".$nodeConfig->{parameters}->{pkg_updates_available}."\n"; }
 				if ( $nodeConfig->{parameters}->{pkg_updates_available} eq "yes" ) {
+					if ( $debug > 0 ) { print "\t\thas updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "true";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = "unknown";
-				# if not, not ;)
 				} else {
+					if ( $debug > 0 ) { print "\t\tno updates!\n"; }
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdates} = "false";
 					$reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList} = "empty";
 				}
 
-				# set updates-security to values of updates
 				$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdates} = $reports{$reportContact}{$nodeConfig->{name}}{hasUpdates};
 				$reports{$reportContact}{$nodeConfig->{name}}{hasSecurityUpdatesList} = $reports{$reportContact}{$nodeConfig->{name}}{hasUpdatesList};
 
 			}
+		} else {
+			if ( $debug > 0 ) { print "\t\tUnknown machine: ".$nodeConfig->{name}."\n"; }
 		}
+		if ( $debug > 0 ) { print "\n\n"; }
 	}
+	if ( $debug > 0 ) { print "\n\n"; }
 }
 
 # now create report emails by contact
+if ( $debug > 0 ) { print "\n\n"; }
 foreach my $reportContact (@reportRecipients) {
-
-	# create reporting file, open handler and print preamble
+	# create reporting file and open handler
+	if ( $debug > 0 ) { print "Create report for user: ".$reportContact."\n"; }
 	my $reportFilename = '/tmp/puppet-report-mail-'.$reportContact.'.txt';
 	my $reportAvailable = 0;
 	open(my $reportFilenameHandle, '>', $reportFilename) or die "Could not open file '$reportFilename' $!";
@@ -235,7 +206,6 @@ foreach my $reportContact (@reportRecipients) {
 	print $reportFilenameHandle "Report generation date:\t\t".localtime."\n\n";
 	print $reportFilenameHandle "Your machines:";
 
-	# list machines contact is responsible 
 	my $firstmachine = 1;
 	for my $reportMachine ( keys %{ $reports{$reportContact}} ) {
 		my %reportData = %{ $reports{$reportContact}{$reportMachine}};
@@ -248,84 +218,65 @@ foreach my $reportContact (@reportRecipients) {
 	}
 	print $reportFilenameHandle "\n";
 
-	# now iterate over machines for this contact and create per machine report
 	for my $reportMachine ( keys %{ $reports{$reportContact}} ) {
 		my %reportData = %{ $reports{$reportContact}{$reportMachine}};
 
 		# test if needs reporting for updates
 		my $createReport = 0;
+	        if ( $debug > 0 ) { print "\t\tTest for updates: ".$reportMachine."\n"; }
 		if ( $reportData{hasUpdates} eq "true" ) {
+		        if ( $debug > 0 ) { print "\t\tHas updates!\n"; }
 			$createReport = 1;
 			$reportAvailable = 1;
+		} else {
+		        if ( $debug > 0 ) { print "\t\tHas no updates!\n"; }
 		}
 
 		# test if needs reporting for security updates
 		my $createSecurityReport = 0;
+	        if ( $debug > 0 ) { print "\t\tTest for security updates: ".$reportMachine."\n"; }
 		if ( $reportData{hasSecurityUpdates} eq "true" ) {
+		        if ( $debug > 0 ) { print "\t\tHas security updates!\n"; }
 			$createSecurityReport = 1;
 			$reportAvailable = 1;
+		} else {
+		        if ( $debug > 0 ) { print "\t\tHas no security updates!\n"; }
 		}
 	
-		# test if needs reporting for hold
-		my $createHoldReport = 0;
-		if ( $reportData{hasHold} eq "true" ) {
-			$createHoldReport = 1;
-		}
-	
-		# test if needs reporting for reboot
-		my $createRebootReport = 0;
-		if ( $reportData{hasReboot} eq "true" ) {
-			$createRebootReport = 1;
-		}
-	
-		# print report by machine
 		if ( $reportData{reportAlways} == 1 || $createReport == 1 || $createSecurityReport == 1 ) {
+	        	if ( $debug > 0 ) { print "\tCreate report for machine: ".$reportMachine."\n"; }
 
-			# machine information
+		        if ( $debug > 1 ) { print "\t\tWriting report file\n"; }
 			print $reportFilenameHandle "Machine:\t".$reportData{machineFqdn}."\n";
 			print $reportFilenameHandle "System:\t\t".$reportData{machineOsName}." ".$reportData{machineOsVersion}.", up since ".$reportData{machineUptime}." days, last report on ".localtime($reportData{lastUpdate}).", IP: ".$reportData{machineIp}."\n";
 			print $reportFilenameHandle "Maintainer:\t".$reportData{machineOwnerName}." <".$reportData{machineOwnerMail}.">\n";
-
-			# if holds exist, print
-			if ( $createHoldReport == 1 ) {
-				print $reportFilenameHandle "Holds:\t\t$reportData{hasHoldList}\n";
-			} 
-
-			# if reboot required, print
-			if ( $createRebootReport == 1 ) {
-				print $reportFilenameHandle "Reboot:\t\trequired\n";
-			} 
-
-			# if no updates at all, print message
 			if ( $createReport == 0 && $createSecurityReport == 0 ) {
 				print $reportFilenameHandle "\t\tNo updates are available, everything is fine, just chill and relax!\n";
 			} else {
-				# if normal updates are available, print report
 				if ( $createReport == 1 ) {
 					print $reportFilenameHandle "Updates:\t$reportData{hasUpdatesList}\n";
 				} 
-
-				# if security updates are available, print report
 				if ( $createSecurityReport == 1 ) {
 					print $reportFilenameHandle "Security:\t$reportData{hasSecurityUpdatesList}\n";
 				}
 			}
 			print $reportFilenameHandle "\n";
+		} else {
+	        	if ( $debug > 0 ) { print "\tNo report for machine: ".$reportMachine."\n"; }
 		}
 	}
 
-
-
-	# if no updates on any machine available, print message
+	if ( $debug > 0 ) { print "Testing for available updates on user: ".$reportContact."\n"; }
 	if ( $reportAvailable == 0 ) {
+		if ( $debug > 0 ) { print "Updates available on user: ".$reportContact."\n"; }
 		print $reportFilenameHandle "There are no updates for your systems, just relax and enjoy your day!\n\n";
+	} else {
+		if ( $debug > 0 ) { print "No updates available on user: ".$reportContact."\n"; }
 	}
 
-	# postamble and end of report file
 	print $reportFilenameHandle "That's it, my dark master,\nlive long and prosper!\n\nMaster of puppets\n".hostname."\n";
 	close($reportFilenameHandle);
 
-	# create emailbody from reportfile and delete reportfile
 	open($reportFilenameHandle, '<:encoding(UTF-8)', $reportFilename) or die "Could not open file '$reportFilename' $!";
 	my $mailBody = "";
 	while (my $row = <$reportFilenameHandle>) {
@@ -334,12 +285,11 @@ foreach my $reportContact (@reportRecipients) {
 	close($reportFilenameHandle);
 	unlink($reportFilename);
 
-	# define emailtransport
+	if ( $debug > 0 ) { print "\tSending emailreport to: ".$reportContact."\n"; }
 	my $transport = Email::Sender::Transport::SMTP->new({
 		host => $smtpServer
 	});
 
-	# create email and send
 	my $email = Email::Simple->create(
 		header => [
 			To => $reportContact,
@@ -349,4 +299,10 @@ foreach my $reportContact (@reportRecipients) {
 		body => $mailBody."\n",
 	);
 	sendmail($email, { transport => $transport });
+}
+
+if ( $debug > 1 ) { 
+	print "\nReport Data:\n";
+	print Dumper(%reports);
+	print "\n";
 }
